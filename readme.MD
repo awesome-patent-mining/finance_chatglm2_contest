@@ -1,8 +1,8 @@
 ### 代码说明：
 ***
-**step_1_convert_table_to_string.py**:  将markdown格式的表格转化为文字
-**step_2_combine_table_and_text.py**：将表格转化的文字和纯文本内容合并
-**step_3_txt2vec.py**：利用text2vec-large-chinese将每个pdf中的文本信息转化为向量，存储在faiss中
+**step_1_convert_table_to_string.py**:  将markdown格式的表格转化为文字  
+**step_2_combine_table_and_text.py**：将表格转化的文字和纯文本内容合并  
+**step_3_txt2vec.py**：利用text2vec-large-chinese将每个pdf中的文本信息转化为向量，存储在faiss中  
 **step_4_finance_generate_answer_４_model2_huggingface_1.py**：利用chatglm-2，回答 5000个问题
 ### 数据说明：
 ***
