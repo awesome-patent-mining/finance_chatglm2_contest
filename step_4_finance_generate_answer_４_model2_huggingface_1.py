@@ -99,7 +99,7 @@ def parse_text(text):
     return text
 # 先获取已经存在的FAISS索引名称
 FAISS_fold_path = './faiss_local_file_combine_text_table'
-max_length = 20000
+max_length = 5000
 top_p = 5
 temperature = 0.01
 file_names = glob.glob(FAISS_fold_path + '/*')
@@ -120,7 +120,7 @@ with open('good-5.txt','r') as f:
         ques_pdf_keyword_map_list.append(short_name+'_'+release_year+'年')
 # 循环5000个问题，如果这个问题对应的pdf已经生成了FAISS索引，将这个索引调出，从中找出top_k个最可能的句子，然后一起放到chatGLM2中，来生成答案
 #question_list = []
-file_csv_path = './chatglm_llm_fintech_raw_dataset/5000_questions_multi_ques.csv'
+file_csv_path = './chatglm_llm_fintech_raw_dataset/5000_questions_multi_ques_tanxy_update_20230807.csv'
 questions_multi_type_df = pd.read_csv(file_csv_path)
 question_list = list(questions_multi_type_df['无企业名称和年份的正文'])
 raw_question_list = list(questions_multi_type_df['正文'])
@@ -129,54 +129,68 @@ year_list = list(questions_multi_type_df['时间'])
 
 result_list = []
 ## 3.对5000个问题循环执行
-
-
-for idx,ques in enumerate(question_list):
+result_dir = 'result_20230808'
+sample_begin_pos = 0
+sep_num = 625
+for idx,ques in enumerate(question_list[sample_begin_pos:sample_begin_pos+sep_num]):
     ## 4.对于每个问题，从ques_pdf_keyword_map_raw.txt中找到对应的pdf文件
+
+    idx = sample_begin_pos+idx
+    data_tmp = dict()
+    data_tmp['id'] = idx
+    top_p_tmp = top_p
+    ## 4.对这个问题，从5000_questions_multi_ques.csv中找到该问题去掉企业名称后的版本，比如 四方科技的电子邮箱是多少？--》邮箱是多少
+    data_tmp['question'] = raw_question_list[idx]
     pdf_keywords = ques_pdf_keyword_map_list[idx]
     if FAISS_index_list.count(pdf_keywords)>0:
-        data_tmp = dict()
-        data_tmp['id'] = idx
-        ## 4.对这个问题，从5000_questions_multi_ques.csv中找到该问题去掉企业名称后的版本，比如 四方科技的电子邮箱是多少？--》邮箱是多少
-        data_tmp['question'] = ques
+
         vecdb = FAISS.load_local(FAISS_fold_path+"/"+pdf_keywords, embeddings)
         ## 5.拿着去掉企业名称的问题，到pdf对应的faiss文件中检索相关段落/句子
-        proxy_chain = init_chain_proxy(ProxyLLM(), vecdb, top_p)
+
+        proxy_chain = init_chain_proxy(ProxyLLM(), vecdb, top_p_tmp)
         q = proxy_chain.run(ques)
         q = parse_text(q)
+        while len(q)>=max_length:
+            top_p_tmp=top_p_tmp-1
+            proxy_chain = init_chain_proxy(ProxyLLM(), vecdb, top_p_tmp)
+            q = proxy_chain.run(ques)
+            q = parse_text(q)
         ## 5.拿着没有去掉企业名称的问题，连同faiss中检索到的相关句子，组成prompt
 
         prompt_template = """请你基于已知信息回答用户的问题：""" + raw_question_list[idx] + """\n已知信息:我们从""" + corp_list[idx] + """公司""" + year_list[idx] + """的金融报告的表格中抽取以下内容："""+q
-
-
-
-
-        #proxy_chain = init_chain_proxy_1(ProxyLLM(), vecdb,raw_question_list[idx],corp_list[idx],year_list[idx], top_p)
-
-        #q = proxy_chain.run(ques)
-        '''
-        while len(q)>=max_length:
-            top_tmp = top_p-1
-            proxy_chain = init_chain_proxy_1(ProxyLLM(), vecdb, top_tmp)
-            q = proxy_chain.run(ques)
-        '''
-
-        history = []
-        #print(f'the length of prompt for question {idx} is {len(q)}')
-        ## 6.将promt放入大模型，获得结果
-        response,history = model.chat(tokenizer, prompt_template, history, max_length=max_length, top_p=top_p,temperature=temperature)
-
-        # history = answer['history']
-        print(f'第{idx}个问题是：{raw_question_list[idx]}，chatglm2的回答是:{response}')
-        #print(f'第{idx}个问题是：{ques},该问题对应的pdf关键词是:{pdf_keywords},prompt是：{prompt_template}')
-        data_tmp['answer'] = response
-        result_list.append(data_tmp)
+        data_tmp['query'] = q
     else:
-        pass
-        #print(f'第{idx}个问题是：{ques},该问题对应的pdf关键词是{pdf_keywords}，目前相关pdf文件内容还没有入FAISS')
-with open('model_2_raw_huggingface.jsonl','w') as f:
-    for result_tmp in result_list:
-        result_json = json.dumps(result_tmp,ensure_ascii=False)
-        f.write(result_json+'\n')
+        prompt_template = """请回答用户的问题：""" + raw_question_list[idx]
+        data_tmp['query'] = ''
+    print('prompt_template:'+prompt_template)
+    history = []
+    #print(f'the length of prompt for question {idx} is {len(q)}')
+    ## 6.将promt放入大模型，获得结果
+    response,history = model.chat(tokenizer, prompt_template, history, max_length=max_length, top_p=top_p,temperature=temperature)
+
+    # history = answer['history']
+    print(f'第{idx}个问题是：{raw_question_list[idx]}，chatglm2的回答是:{response}')
+    #print(f'第{idx}个问题是：{ques},该问题对应prompt的长度是：{len(prompt_template)}')
+    data_tmp['answer'] = response
+    result_list.append(data_tmp)
+
+    if len(result_list)==10:
+        with open(f'./{result_dir}/model_2_raw_huggingface_{idx}.jsonl', 'w', encoding='utf8') as f:
+            for result_tmp in result_list:
+                result_json = json.dumps(result_tmp, ensure_ascii=False)
+                f.write(result_json + '\n')
+        result_list = []
+
+if result_list!=[]:
+    with open(f'./{result_dir}/model_2_raw_huggingface_{sample_begin_pos+sep_num-1}.jsonl', 'w', encoding='utf8') as f:
+        for result_tmp in result_list:
+            result_json = json.dumps(result_tmp, ensure_ascii=False)
+            f.write(result_json + '\n')
+
+
+
+
+
+
 
 
